@@ -1,0 +1,43 @@
+apply plugin: 'cpp'
+
+model {
+  buildTypes {
+    debug
+    release
+  }
+
+  platforms {
+    x86 {
+      architecture "x86"
+    }
+    x64 {
+      architecture "x86_64"
+    }
+    itanium {
+      architecture "ia-64"
+    }
+  }
+
+  components {
+    /*
+      hello(NativeLibrarySpec) {
+      binaries.all {
+      cppCompiler.define "HELLO_EXPORT"
+      if (flavor == flavors.enterprise) {
+      cppCompiler.define "ENTERPRISE"
+      }
+      }
+      }*/
+    main(NativeExecutableSpec) {
+      binaries.all {
+        cppCompiler.args "-I/Users/astolfi/projects/boost_1_62_0",
+                         "-std=gnu++14"
+
+        linker.args "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_system.a",
+                    "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_filesystem.a",
+                    "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_thread.a"
+      }
+      //lib library: "hello"
+    }
+  }
+}
