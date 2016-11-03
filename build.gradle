@@ -19,25 +19,15 @@ model {
   }
 
   components {
-    /*
-      hello(NativeLibrarySpec) {
-      binaries.all {
-      cppCompiler.define "HELLO_EXPORT"
-      if (flavor == flavors.enterprise) {
-      cppCompiler.define "ENTERPRISE"
-      }
-      }
-      }*/
     main(NativeExecutableSpec) {
       binaries.all {
-        cppCompiler.args "-I/Users/astolfi/projects/boost_1_62_0",
+        cppCompiler.args "-I$BOOST_HOME",
                          "-std=gnu++14"
 
-        linker.args "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_system.a",
-                    "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_filesystem.a",
-                    "/Users/astolfi/projects/boost_1_62_0/stage/lib/libboost_thread.a"
+        linker.args "$BOOST_HOME/stage/lib/libboost_system.a",
+                    "$BOOST_HOME/stage/lib/libboost_filesystem.a",
+                    "$BOOST_HOME/stage/lib/libboost_thread.a"
       }
-      //lib library: "hello"
     }
   }
 }
