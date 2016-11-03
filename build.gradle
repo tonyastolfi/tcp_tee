@@ -22,11 +22,12 @@ model {
     main(NativeExecutableSpec) {
       binaries.all {
         cppCompiler.args "-I$System.env.BOOST_HOME",
-                         "-std=gnu++14"
+                         "-std=gnu++11"
 
         linker.args "$System.env.BOOST_HOME/stage/lib/libboost_system.a",
                     "$System.env.BOOST_HOME/stage/lib/libboost_filesystem.a",
-                    "$System.env.BOOST_HOME/stage/lib/libboost_thread.a"
+                    "$System.env.BOOST_HOME/stage/lib/libboost_thread.a",
+                    "-pthread"
       }
     }
   }
