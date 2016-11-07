@@ -84,7 +84,8 @@ public:
                  boost::asio::ip::tcp::socket &target,
                  boost::asio::io_service::strand &strand)
       : name_(name + boost::lexical_cast<std::string>(next_id())),
-        source_(source), target_(target), strand_(strand), dump_(name_) {}
+        source_(source), target_(target), strand_(strand), dump_(name_),
+        flush_timer_(source_.get_io_service()) {}
 
   void start(handler_type handler) {
     {
@@ -100,6 +101,7 @@ public:
       write_label_ = oss.str();
     }
     handler_ = std::move(handler);
+    start_flush_timer();
     start_io();
   }
 
@@ -119,76 +121,100 @@ private:
     }
   }
 
+  void start_flush_timer() {
+    timer_running_ = true;
+    flush_timer_.expires_from_now(boost::posix_time::seconds(5));
+    flush_timer_.async_wait(
+        strand_.wrap([this](const boost::system::error_code &ec) {
+          timer_running_ = false;
+          if (ec == boost::asio::error::operation_aborted || timer_cancelled_) {
+            check_done();
+            return;
+          }
+
+          dump_ << std::flush;
+          start_flush_timer();
+        }));
+  }
+
   void start_reading() {
     assert(!reading_);
     assert(!done_reading_);
-    auto handler = [this](const boost::system::error_code &ec, size_t count) {
-      reading_ = false;
-      if (ec) {
-        CLOG(read_label_ << ": read error '" << ec.message() << "'");
-        done_reading_ = true;
-        start_io();
-        check_done();
-        return;
-      }
-      CLOG(read_label_ << ": read " << count << " bytes");
-      buffer_.commit(count);
-      assert(count > 0);
-      assert(!buffer_.empty());
-      start_io();
-    };
     reading_ = true;
     CLOG(read_label_ << ": reading...");
-    source_.async_read_some(buffer_.writable(), strand_.wrap(handler));
+    source_.async_read_some(
+        buffer_.writable(),
+        strand_.wrap([this](const boost::system::error_code &ec, size_t count) {
+          reading_ = false;
+          if (ec) {
+            CLOG(read_label_ << ": read error '" << ec.message() << "'");
+            done_reading_ = true;
+            start_io();
+            check_done();
+            return;
+          }
+          CLOG(read_label_ << ": read " << count << " bytes");
+          buffer_.commit(count);
+          assert(count > 0);
+          assert(!buffer_.empty());
+          start_io();
+        }));
   }
 
   void start_writing() {
     assert(!writing_);
     assert(!done_writing_);
-    auto handler = [this](const boost::system::error_code &ec, size_t count) {
-      writing_ = false;
-      if (ec) {
-        CLOG(write_label_ << ": write error '" << ec.message() << "'");
-        done_writing_ = true;
-        boost::system::error_code e;
-        source_.shutdown(boost::asio::ip::tcp::socket::shutdown_receive, e);
-        target_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, e);
-        check_done();
-        return;
-      }
-      CLOG(write_label_ << ": wrote " << count << " bytes");
-      {
-        auto data = buffer_.readable();
-        size_t remaining = count;
-        for (const auto &cb : data) {
-          const size_t len = std::min(remaining, boost::asio::buffer_size(cb));
-          try {
-            dump_.write(boost::asio::buffer_cast<const char *>(cb), len);
-          } catch (std::exception &e) {
-            CLOG(write_label_ << ": failed to dump data: " << e.what());
-            done_writing_ = true;
-            check_done();
-            return;
-          }
-          remaining -= len;
-        }
-      }
-      buffer_.consume(count);
-      assert(count > 0);
-      assert(!buffer_.full());
-      start_io();
-    };
     writing_ = true;
     CLOG(write_label_ << ": writing... " << buffer_);
     assert(!buffer_.empty());
     assert(buffer_.readable_size() > 0);
-    target_.async_write_some(buffer_.readable(), strand_.wrap(handler));
+    target_.async_write_some(
+        buffer_.readable(),
+        strand_.wrap([this](const boost::system::error_code &ec, size_t count) {
+          writing_ = false;
+          if (ec) {
+            CLOG(write_label_ << ": write error '" << ec.message() << "'");
+            done_writing_ = true;
+            boost::system::error_code e;
+            source_.shutdown(boost::asio::ip::tcp::socket::shutdown_receive, e);
+            target_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, e);
+            check_done();
+            return;
+          }
+          CLOG(write_label_ << ": wrote " << count << " bytes");
+          {
+            auto data = buffer_.readable();
+            size_t remaining = count;
+            for (const auto &cb : data) {
+              const size_t len =
+                  std::min(remaining, boost::asio::buffer_size(cb));
+              try {
+                dump_.write(boost::asio::buffer_cast<const char *>(cb), len);
+              } catch (std::exception &e) {
+                CLOG(write_label_ << ": failed to dump data: " << e.what());
+                done_writing_ = true;
+                check_done();
+                return;
+              }
+              remaining -= len;
+            }
+          }
+          buffer_.consume(count);
+          assert(count > 0);
+          assert(!buffer_.full());
+          start_io();
+        }));
   }
 
   void check_done() {
     if (!reading_ && !writing_ && done_reading_) {
-      CLOG("done: " << read_label_ << ", " << write_label_);
-      handler_();
+      if (timer_running_) {
+        timer_cancelled_ = true;
+        flush_timer_.cancel();
+      } else {
+        CLOG("done: " << read_label_ << ", " << write_label_);
+        handler_();
+      }
     }
   }
 
@@ -205,6 +231,9 @@ private:
   bool done_writing_ = false;
   handler_type handler_;
   std::ofstream dump_;
+  boost::asio::deadline_timer flush_timer_;
+  bool timer_running_ = false;
+  bool timer_cancelled_ = false;
 };
 
 class ProxyConnection {
